@@ -1,0 +1,49 @@
+cabal-version:       2.2
+
+name:                temu
+version:             0.1.0.0
+synopsis:            Retro sci-fi terminal emulator
+description:         A terminal emulator recreating the aesthetics of old sci-fi movie computer displays
+homepage:            https://github.com/githubuser/temu#readme
+license:             BSD-3-Clause
+license-file:        LICENSE
+author:              Author name here
+maintainer:          example@example.com
+copyright:           2025 Author name here
+category:            Terminal
+build-type:          Simple
+extra-source-files:  README.md
+                     CHANGELOG.md
+
+executable temu
+  hs-source-dirs:      src
+  main-is:             Main.hs
+  default-language:    Haskell2010
+  build-depends:       base >= 4.7 && < 5
+                     -- Windowing + input
+                     , sdl2 >= 2.5
+                     , sdl2-ttf >= 2.1
+                     -- Text handling
+                     , text >= 2.0
+                     , bytestring >= 0.11
+                     -- Shell process
+                     , process >= 1.6
+                     , async >= 2.2
+                     -- Containers
+                     , vector >= 0.13
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Widentities
+                       -Wincomplete-record-updates
+                       -Wincomplete-uni-patterns
+                       -Wmissing-export-lists
+                       -Wmissing-home-modules
+                       -Wpartial-fields
+                       -Wredundant-constraints
+                       -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
+
+source-repository head
+  type:     git
+  location: https://github.com/githubuser/temu
