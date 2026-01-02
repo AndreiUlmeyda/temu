@@ -52,7 +52,7 @@ charHeight = 18
 renderText :: SDL.Renderer -> TTF.Font -> SDL.V4 Word8 -> SDL.V2 CInt -> Text -> IO ()
 renderText renderer font color pos txt = do
   when (not $ T.null txt) $ do
-    surface <- TTF.solid font color txt
+    surface <- TTF.blended font color txt
     texture <- SDL.createTextureFromSurface renderer surface
     SDL.freeSurface surface
     SDL.TextureInfo {SDL.textureWidth = w, SDL.textureHeight = h} <- SDL.queryTexture texture
@@ -75,7 +75,7 @@ renderChar renderer font cell x y isCursor = do
   -- Draw character if not space
   when (ch /= ' ' && ch /= '\0') $ do
     let txt = T.singleton ch
-    surface <- TTF.solid font fg txt
+    surface <- TTF.blended font fg txt
     texture <- SDL.createTextureFromSurface renderer surface
     SDL.freeSurface surface
     SDL.TextureInfo {SDL.textureWidth = w, SDL.textureHeight = h} <- SDL.queryTexture texture
