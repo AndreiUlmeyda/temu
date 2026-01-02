@@ -19,6 +19,7 @@ module Temu.PTY
   )
 where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, catch)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -60,10 +61,14 @@ spawnShell rows cols = do
   return $ PTY pty ph
 
 -- | Close the PTY and terminate the shell process
+-- Important: terminate process FIRST to unblock any readers, then close pty
 closePTY :: PTY -> IO ()
 closePTY (PTY pty ph) = do
-  closePty pty
+  -- Terminate process first - this will cause readPty to return/fail
   terminateProcess ph `catch` ignoreException
+  -- Small delay to let process terminate
+  threadDelay 10000 -- 10ms
+  closePty pty `catch` ignoreException
   where
     ignoreException :: SomeException -> IO ()
     ignoreException _ = return ()

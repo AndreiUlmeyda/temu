@@ -68,13 +68,13 @@ data Color = Color
   }
   deriving (Show, Eq)
 
--- | Default foreground color (white)
+-- | Default foreground color - phosphor green #32FF64
 defaultFg :: Color
-defaultFg = Color 255 255 255
+defaultFg = Color 50 255 100
 
--- | Default background color (black)
+-- | Default background color - near-black with green tint #0A0F0A
 defaultBg :: Color
-defaultBg = Color 0 0 0
+defaultBg = Color 10 15 10
 
 -- | A terminal cell with character and attributes
 data Cell = Cell
@@ -111,8 +111,9 @@ foreign import ccall unsafe "vterm_screen_reset"
 foreign import ccall unsafe "vterm_input_write"
   c_vterm_input_write :: Ptr VTerm -> Ptr CChar -> CSize -> IO CSize
 
-foreign import ccall unsafe "vterm_screen_get_cell"
-  c_vterm_screen_get_cell :: Ptr VTermScreen -> Ptr VTermPos -> Ptr Word8 -> IO CInt
+-- Using wrapper because vterm_screen_get_cell takes VTermPos by value
+foreign import ccall unsafe "vterm_screen_get_cell_wrapper"
+  c_vterm_screen_get_cell :: Ptr VTermScreen -> CInt -> CInt -> Ptr Word8 -> IO CInt
 
 foreign import ccall unsafe "vterm_state_get_cursorpos"
   c_vterm_state_get_cursorpos :: Ptr () -> Ptr VTermPos -> IO ()
@@ -135,6 +136,12 @@ foreign import ccall "wrapper"
 foreign import ccall unsafe "vterm_set_utf8"
   c_vterm_set_utf8 :: Ptr VTerm -> CInt -> IO ()
 
+foreign import ccall unsafe "vterm_screen_enable_altscreen"
+  c_vterm_screen_enable_altscreen :: Ptr VTermScreen -> CInt -> IO ()
+
+foreign import ccall unsafe "vterm_screen_flush_damage"
+  c_vterm_screen_flush_damage :: Ptr VTermScreen -> IO ()
+
 -- | Create a new VTerm instance with given rows and columns
 newVTerm :: Int -> Int -> IO VTerm
 newVTerm rows cols = do
@@ -146,6 +153,8 @@ newVTerm rows cols = do
       c_vterm_set_utf8 ptr 1
       -- Get and reset screen
       screenPtr <- c_vterm_obtain_screen ptr
+      -- Enable alternate screen buffer (for apps that use it like fish, vim, etc.)
+      c_vterm_screen_enable_altscreen screenPtr 1
       c_vterm_screen_reset screenPtr 1
       return $ VTerm ptr
 
@@ -159,49 +168,60 @@ getScreen (VTerm ptr) = VTermScreen <$> c_vterm_obtain_screen ptr
 
 -- | Write input bytes to VTerm (from PTY output)
 inputWrite :: VTerm -> ByteString -> IO Int
-inputWrite (VTerm ptr) bs = do
+inputWrite vt@(VTerm ptr) bs = do
   BSU.unsafeUseAsCStringLen bs $ \(cstr, len) -> do
     written <- c_vterm_input_write ptr cstr (fromIntegral len)
+    -- Flush damage to ensure screen state is updated
+    screen <- getScreen vt
+    let (VTermScreen screenPtr) = screen
+    c_vterm_screen_flush_damage screenPtr
     return $ fromIntegral written
 
 -- | Get a cell at the given position
--- Returns Nothing if position is out of bounds
+-- Returns emptyCell if position is out of bounds
 getCell :: VTermScreen -> Int -> Int -> IO Cell
 getCell (VTermScreen ptr) row col = do
-  alloca $ \posPtr -> do
-    poke posPtr (VTermPos (fromIntegral row) (fromIntegral col))
-    -- Allocate buffer for cell data (VTermScreenCell is ~64 bytes)
-    allocaBytes 128 $ \cellPtr -> do
-      result <- c_vterm_screen_get_cell ptr posPtr cellPtr
-      if result == 0
-        then return emptyCell
-        else do
-          -- Extract character (first 4 bytes are chars array, max 6 uint32_t)
-          charCode <- peekByteOff cellPtr 0 :: IO Word32
-          let ch = if charCode == 0 then ' ' else toEnum (fromIntegral charCode)
+  -- Allocate buffer for cell data (VTermScreenCell is ~64 bytes)
+  allocaBytes 128 $ \cellPtr -> do
+    result <- c_vterm_screen_get_cell ptr (fromIntegral row) (fromIntegral col) cellPtr
+    if result == 0
+      then return emptyCell
+      else do
+        -- Extract character (first 4 bytes are chars array, max 6 uint32_t)
+        charCode <- peekByteOff cellPtr 0 :: IO Word32
+        let ch = if charCode == 0 then ' ' else toEnum (fromIntegral charCode)
 
-          -- Extract attributes (at offset 24 in the struct)
-          attrs <- peekByteOff cellPtr 24 :: IO Word16
-          let bold = testBit attrs 0
-              italic = testBit attrs 2
-              underline = testBit attrs 1
-              reverse_ = testBit attrs 4
+        -- VTermScreenCell layout (libvterm 0.3.x):
+        -- chars[6]: offset 0, size 24
+        -- width:    offset 24, size 1
+        -- padding:  offset 25-27, size 3 (alignment)
+        -- attrs:    offset 28, size 4
+        -- fg:       offset 32, size 4 (VTermColor: type, r, g, b)
+        -- bg:       offset 36, size 4
 
-          -- Extract foreground color (at offset 28)
-          fgType <- peekByteOff cellPtr 28 :: IO Word8
-          fgR <- peekByteOff cellPtr 30 :: IO Word8
-          fgG <- peekByteOff cellPtr 31 :: IO Word8
-          fgB <- peekByteOff cellPtr 32 :: IO Word8
-          let fg = if fgType == 0 then defaultFg else Color fgR fgG fgB
+        -- Extract attributes (at offset 28)
+        attrs <- peekByteOff cellPtr 28 :: IO Word32
+        let bold = testBit attrs 0
+            italic = testBit attrs 3
+            underline = testBit attrs 1 || testBit attrs 2
+            reverse_ = testBit attrs 5
 
-          -- Extract background color (at offset 36)
-          bgType <- peekByteOff cellPtr 36 :: IO Word8
-          bgR <- peekByteOff cellPtr 38 :: IO Word8
-          bgG <- peekByteOff cellPtr 39 :: IO Word8
-          bgB <- peekByteOff cellPtr 40 :: IO Word8
-          let bg = if bgType == 0 then defaultBg else Color bgR bgG bgB
+        -- Extract foreground color (at offset 32)
+        -- VTermColor: type at +0, red at +1, green at +2, blue at +3
+        fgType <- peekByteOff cellPtr 32 :: IO Word8
+        fgR <- peekByteOff cellPtr 33 :: IO Word8
+        fgG <- peekByteOff cellPtr 34 :: IO Word8
+        fgB <- peekByteOff cellPtr 35 :: IO Word8
+        let fg = if fgType == 0 then defaultFg else Color fgR fgG fgB
 
-          return $ Cell ch fg bg bold italic underline reverse_
+        -- Extract background color (at offset 36)
+        bgType <- peekByteOff cellPtr 36 :: IO Word8
+        bgR <- peekByteOff cellPtr 37 :: IO Word8
+        bgG <- peekByteOff cellPtr 38 :: IO Word8
+        bgB <- peekByteOff cellPtr 39 :: IO Word8
+        let bg = if bgType == 0 then defaultBg else Color bgR bgG bgB
+
+        return $ Cell ch fg bg bold italic underline reverse_
 
 -- | Get the cursor position (row, col)
 getCursorPos :: VTerm -> IO (Int, Int)

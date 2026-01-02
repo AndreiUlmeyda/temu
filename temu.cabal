@@ -60,6 +60,8 @@ library
   pkgconfig-depends:   vterm >= 0.1
   include-dirs:        /opt/homebrew/include
   extra-lib-dirs:      /opt/homebrew/lib
+  -- C helper for struct-by-value FFI calls
+  c-sources:           cbits/vterm_helper.c
 
 executable temu
   import:              shared

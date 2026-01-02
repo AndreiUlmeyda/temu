@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Main application module - wires everything together
 module Temu.App
@@ -7,9 +8,9 @@ module Temu.App
   )
 where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.STM
-import Control.Exception (finally)
+import Control.Exception (SomeException, catch, finally)
 import Control.Monad (unless, when)
 import qualified Data.ByteString as BS
 import qualified Data.Text.IO as TIO
@@ -65,18 +66,31 @@ readCellGrid vterm = do
       getCell screen row col
 
 -- | PTY reader thread - reads from PTY and feeds to VTerm
-ptyReaderThread :: PTY -> VTerm -> TVar Bool -> IO ()
-ptyReaderThread pty vterm running = go
+-- Sets shellExited to True when shell process exits
+ptyReaderThread :: PTY -> VTerm -> TVar Bool -> TVar Bool -> IO ()
+ptyReaderThread pty vterm running shellExited = go 0 `catch` handleError
   where
-    go = do
+    handleError :: SomeException -> IO ()
+    handleError _ = atomically $ writeTVar shellExited True
+
+    go :: Int -> IO ()
+    go emptyCount = do
       isRunning <- readTVarIO running
       when isRunning $ do
         bytes <- readPTY pty
-        unless (BS.null bytes) $ do
-          _ <- inputWrite vterm bytes
-          return ()
-        threadDelay 1000 -- 1ms delay
-        go
+        if BS.null bytes
+          then do
+            -- Multiple empty reads likely means shell exited
+            let newCount = emptyCount + 1
+            if newCount > 100
+              then atomically $ writeTVar shellExited True
+              else do
+                threadDelay 10000 -- 10ms delay on empty read
+                go newCount
+          else do
+            _ <- inputWrite vterm bytes
+            threadDelay 1000 -- 1ms delay
+            go 0 -- reset empty count on successful read
 
 -- | Update the state with current VTerm screen contents
 syncVTermToState :: VTerm -> AppStateVar -> IO ()
@@ -98,12 +112,15 @@ processEvent event pty = do
     NoAction -> return False
 
 -- | Main application loop
-appLoop :: SDL.Renderer -> TTF.Font -> AppStateVar -> PTY -> VTerm -> IO ()
-appLoop renderer font stateVar pty vterm = do
+appLoop :: SDL.Renderer -> TTF.Font -> AppStateVar -> PTY -> VTerm -> TVar Bool -> IO ()
+appLoop renderer font stateVar pty vterm shellExited = do
   -- Poll and process events
   events <- SDL.pollEvents
   quitSignals <- mapM (\e -> processEvent e pty) events
-  let quit = or quitSignals
+  
+  -- Check if shell exited (Ctrl+D or shell closed)
+  shellDone <- readTVarIO shellExited
+  let quit = or quitSignals || shellDone
 
   -- Sync VTerm state to our state
   syncVTermToState vterm stateVar
@@ -119,7 +136,7 @@ appLoop renderer font stateVar pty vterm = do
   -- Frame delay (~60 FPS)
   SDL.delay (fromIntegral frameDelayMs)
 
-  unless quit $ appLoop renderer font stateVar pty vterm
+  unless quit $ appLoop renderer font stateVar pty vterm shellExited
 
 -- | Run the application
 run :: IO ()
@@ -169,19 +186,24 @@ run = do
 
   -- Start PTY reader thread
   runningVar <- newTVarIO True
-  _ <- forkIO $ ptyReaderThread pty vterm runningVar
+  shellExitedVar <- newTVarIO False
+  readerThreadId <- forkIO $ ptyReaderThread pty vterm runningVar shellExitedVar
 
   -- Run main loop
   TIO.putStrLn "TEMU starting..."
-  appLoop renderer font stateVar pty vterm
+  appLoop renderer font stateVar pty vterm shellExitedVar
     `finally` do
-      -- Signal reader thread to stop
+      TIO.putStrLn "TEMU shutting down..."
+
+      -- Signal reader thread to stop and close PTY (unblocks the read)
       atomically $ writeTVar runningVar False
-      threadDelay 10000 -- Give thread time to exit
+      closePTY pty
+
+      -- Kill the reader thread if it's still running
+      killThread readerThreadId `catch` (\(_ :: SomeException) -> return ())
+      threadDelay 50000 -- 50ms to let thread cleanup
 
       -- Cleanup
-      TIO.putStrLn "TEMU shutting down..."
-      closePTY pty
       freeVTerm vterm
       SDL.stopTextInput
       TTF.free font
