@@ -54,9 +54,9 @@ textColor = SDL.V4 50 255 100 255
 promptColor :: SDL.V4 Word8
 promptColor = SDL.V4 80 200 120 255
 
--- | Path to the font file
+-- | Path to the font file - Menlo (Apple's modern monospace)
 fontPath :: FilePath
-fontPath = "/System/Library/Fonts/Monaco.ttf"
+fontPath = "/System/Library/Fonts/Menlo.ttc"
 
 -- | Font size in points
 fontSize :: TTF.PointSize
