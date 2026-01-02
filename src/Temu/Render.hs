@@ -33,7 +33,9 @@ import Temu.State
   ( AppState (..),
     Cell (..),
     Color (..),
+    Selection,
     TerminalState (..),
+    isInSelection,
   )
 
 -- | Convert VTerm Color to SDL color
@@ -48,6 +50,14 @@ charWidth = 10
 charHeight :: CInt
 charHeight = 18
 
+-- | Selection highlight color (blue tint) #3A5A80
+selectionBgColor :: SDL.V4 Word8
+selectionBgColor = SDL.V4 58 90 128 255
+
+-- | Selection text color (white for contrast) #FFFFFF
+selectionFgColor :: SDL.V4 Word8
+selectionFgColor = SDL.V4 255 255 255 255
+
 -- | Render text at a position with given color
 renderText :: SDL.Renderer -> TTF.Font -> SDL.V4 Word8 -> SDL.V2 CInt -> Text -> IO ()
 renderText renderer font color pos txt = do
@@ -61,10 +71,16 @@ renderText renderer font color pos txt = do
     SDL.destroyTexture texture
 
 -- | Render a single character at a position
-renderChar :: SDL.Renderer -> TTF.Font -> Cell -> CInt -> CInt -> Bool -> IO ()
-renderChar renderer font cell x y isCursor = do
-  let fg = if isCursor then toSDLColor (cellBg cell) else toSDLColor (cellFg cell)
-      bg = if isCursor then toSDLColor (cellFg cell) else toSDLColor (cellBg cell)
+-- isCursor: whether this is the cursor position
+-- isSelected: whether this cell is part of a selection
+renderChar :: SDL.Renderer -> TTF.Font -> Cell -> CInt -> CInt -> Bool -> Bool -> IO ()
+renderChar renderer font cell x y isCursor isSelected = do
+  let -- Determine colors based on cursor and selection state
+      -- Cursor takes precedence over selection
+      (fg, bg)
+        | isCursor = (toSDLColor (cellBg cell), toSDLColor (cellFg cell))
+        | isSelected = (selectionFgColor, selectionBgColor)
+        | otherwise = (toSDLColor (cellFg cell), toSDLColor (cellBg cell))
       ch = cellChar cell
 
   -- Draw background rectangle
@@ -90,14 +106,16 @@ renderCellGrid ::
   Vector (Vector Cell) ->
   (Int, Int) -> -- cursor position (row, col)
   Bool -> -- cursor visible
+  Maybe Selection -> -- current text selection
   IO ()
-renderCellGrid renderer font grid (cursorRow, cursorCol) cursorVis = do
+renderCellGrid renderer font grid (cursorRow, cursorCol) cursorVis sel = do
   forM_ (zip [0 ..] (V.toList grid)) $ \(row, rowCells) -> do
     forM_ (zip [0 ..] (V.toList rowCells)) $ \(col, cell) -> do
       let x = marginLeft + fromIntegral col * charWidth
           y = marginTop + fromIntegral row * charHeight
           isCursor = cursorVis && row == cursorRow && col == cursorCol
-      renderChar renderer font cell x y isCursor
+          isSelected = isInSelection sel row col
+      renderChar renderer font cell x y isCursor isSelected
 
 -- | Main render function - renders the entire application state
 render :: SDL.Renderer -> TTF.Font -> AppState -> IO ()
@@ -110,7 +128,8 @@ render renderer font state = do
   let termState = terminal state
       grid = termCellGrid termState
       cursorPos = termCursorPos termState
+      sel = selection state
 
-  renderCellGrid renderer font grid cursorPos (cursorVisible state)
+  renderCellGrid renderer font grid cursorPos (cursorVisible state) sel
 
   SDL.present renderer

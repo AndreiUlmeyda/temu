@@ -14,3 +14,4 @@ int vterm_screen_is_eol_wrapper(const VTermScreen *screen, int row, int col) {
 }
 
 
+

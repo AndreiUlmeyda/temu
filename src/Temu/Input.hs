@@ -12,6 +12,7 @@ module Temu.Input
 where
 
 import Data.ByteString (ByteString)
+import Data.Int (Int32)
 import Data.Text.Encoding (encodeUtf8)
 import qualified SDL
 
@@ -23,6 +24,16 @@ data InputAction
     SendBytes !ByteString
   | -- | User requested to quit
     Quit
+  | -- | Mouse button pressed at pixel position (x, y)
+    MouseDown !Int32 !Int32
+  | -- | Mouse moved while button held at pixel position (x, y)
+    MouseDrag !Int32 !Int32
+  | -- | Mouse button released at pixel position (x, y)
+    MouseUp !Int32 !Int32
+  | -- | Copy selection to clipboard (Cmd+C)
+    Copy
+  | -- | Paste from clipboard (Cmd+V)
+    Paste
   deriving (Show, Eq)
 
 -- | Convert a special key to terminal escape sequence
@@ -69,19 +80,42 @@ classifyEvent payload = case payload of
     | SDL.keyboardEventKeyMotion keyEvent == SDL.Pressed ->
         let keycode = SDL.keysymKeycode (SDL.keyboardEventKeysym keyEvent)
             mods = SDL.keysymModifier (SDL.keyboardEventKeysym keyEvent)
-         in -- Handle Ctrl+C, Ctrl+D, etc.
-            if SDL.keyModifierLeftCtrl mods || SDL.keyModifierRightCtrl mods
+            hasCmd = SDL.keyModifierLeftGUI mods || SDL.keyModifierRightGUI mods
+            hasCtrl = SDL.keyModifierLeftCtrl mods || SDL.keyModifierRightCtrl mods
+         in -- Handle Cmd+C/V for clipboard (macOS), Ctrl+C/D/etc for terminal signals
+            if hasCmd
               then case keycode of
-                SDL.KeycodeC -> SendBytes "\x03" -- SIGINT
-                SDL.KeycodeD -> SendBytes "\x04" -- EOF
-                SDL.KeycodeZ -> SendBytes "\x1a" -- SIGTSTP
-                SDL.KeycodeL -> SendBytes "\x0c" -- Clear screen
-                SDL.KeycodeU -> SendBytes "\x15" -- Kill line
-                SDL.KeycodeW -> SendBytes "\x17" -- Kill word
-                _ -> maybe NoAction SendBytes (keyToBytes keycode)
-              else maybe NoAction SendBytes (keyToBytes keycode)
+                SDL.KeycodeC -> Copy
+                SDL.KeycodeV -> Paste
+                _ -> NoAction
+              else
+                if hasCtrl
+                  then case keycode of
+                    SDL.KeycodeC -> SendBytes "\x03" -- SIGINT
+                    SDL.KeycodeD -> SendBytes "\x04" -- EOF
+                    SDL.KeycodeZ -> SendBytes "\x1a" -- SIGTSTP
+                    SDL.KeycodeL -> SendBytes "\x0c" -- Clear screen
+                    SDL.KeycodeU -> SendBytes "\x15" -- Kill line
+                    SDL.KeycodeW -> SendBytes "\x17" -- Kill word
+                    _ -> maybe NoAction SendBytes (keyToBytes keycode)
+                  else maybe NoAction SendBytes (keyToBytes keycode)
   SDL.KeyboardEvent _ -> NoAction
   SDL.TextInputEvent textEvent ->
     let txt = SDL.textInputEventText textEvent
      in SendBytes (encodeUtf8 txt)
+  -- Mouse button pressed (left button only)
+  SDL.MouseButtonEvent mouseEvent
+    | SDL.mouseButtonEventButton mouseEvent == SDL.ButtonLeft ->
+        let SDL.P (SDL.V2 x y) = SDL.mouseButtonEventPos mouseEvent
+         in case SDL.mouseButtonEventMotion mouseEvent of
+              SDL.Pressed -> MouseDown x y
+              SDL.Released -> MouseUp x y
+  SDL.MouseButtonEvent _ -> NoAction
+  -- Mouse motion while button held (for selection dragging)
+  SDL.MouseMotionEvent motionEvent
+    | not (null (SDL.mouseMotionEventState motionEvent)) ->
+        -- Button is being held
+        let SDL.P (SDL.V2 x y) = SDL.mouseMotionEventPos motionEvent
+         in MouseDrag x y
+  SDL.MouseMotionEvent _ -> NoAction
   _ -> NoAction

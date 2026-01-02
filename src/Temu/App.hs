@@ -19,26 +19,37 @@ import qualified Data.Vector as V
 import qualified SDL
 import qualified SDL.Font as TTF
 import qualified SDL.Raw.Types as Raw
+import Data.Int (Int32)
+import Data.Text.Encoding (encodeUtf8)
+import Foreign.C.Types (CInt)
+import Temu.Clipboard (copyToClipboard, extractSelectedText, pasteFromClipboard)
 import Temu.Config
   ( appTitle,
     cursorBlinkMs,
     fontPath,
     fontSize,
     frameDelayMs,
+    marginLeft,
+    marginTop,
   )
 import Temu.Input (InputAction (..), classifyEvent)
 import Temu.PTY (PTY, closePTY, readPTY, spawnShell, writePTY)
 import Temu.Render (render)
 import Temu.State
-  ( AppStateVar,
+  ( AppState (..),
+    AppStateVar,
     Cell (..),
+    TerminalState (..),
+    clearSelection,
     modifyAppState_,
     newAppState,
     newTerminalState,
     readAppState,
+    startSelection,
     updateCellGrid,
     updateCursorBlink,
     updateCursorPos,
+    updateSelection,
   )
 import Temu.VTerm
   ( VTerm,
@@ -55,6 +66,21 @@ import Temu.VTerm
 termRows, termCols :: Int
 termRows = 24
 termCols = 80
+
+-- | Character dimensions (must match Render.hs)
+charWidth, charHeight :: CInt
+charWidth = 10
+charHeight = 18
+
+-- | Convert pixel coordinates to cell coordinates (row, col)
+-- Returns clamped values within terminal bounds
+pixelToCell :: Int32 -> Int32 -> (Int, Int)
+pixelToCell pixelX pixelY =
+  let x = fromIntegral pixelX :: CInt
+      y = fromIntegral pixelY :: CInt
+      col = max 0 $ min (termCols - 1) $ fromIntegral ((x - marginLeft) `div` charWidth)
+      row = max 0 $ min (termRows - 1) $ fromIntegral ((y - marginTop) `div` charHeight)
+   in (row, col)
 
 -- | Read the cell grid from VTerm
 readCellGrid :: VTerm -> IO (Vector (Vector Cell))
@@ -101,22 +127,53 @@ syncVTermToState vterm stateVar = do
     updateCursorPos cursorPos $ updateCellGrid grid s
 
 -- | Process a single event and return whether to quit
-processEvent :: SDL.Event -> PTY -> IO Bool
-processEvent event pty = do
+processEvent :: SDL.Event -> PTY -> AppStateVar -> IO Bool
+processEvent event pty stateVar = do
   let action = classifyEvent (SDL.eventPayload event)
   case action of
     Quit -> return True
     SendBytes bytes -> do
+      -- Clear selection when typing
+      modifyAppState_ stateVar clearSelection
       writePTY pty bytes
       return False
     NoAction -> return False
+    -- Mouse selection events
+    MouseDown x y -> do
+      let pos = pixelToCell x y
+      modifyAppState_ stateVar (startSelection pos)
+      return False
+    MouseDrag x y -> do
+      let pos = pixelToCell x y
+      modifyAppState_ stateVar (updateSelection pos)
+      return False
+    MouseUp x y -> do
+      let pos = pixelToCell x y
+      modifyAppState_ stateVar (updateSelection pos)
+      return False
+    -- Clipboard operations
+    Copy -> do
+      state <- readAppState stateVar
+      case selection state of
+        Nothing -> return ()
+        Just sel -> do
+          let grid = termCellGrid (terminal state)
+              txt = extractSelectedText grid sel
+          copyToClipboard txt
+      return False
+    Paste -> do
+      mTxt <- pasteFromClipboard
+      case mTxt of
+        Nothing -> return ()
+        Just txt -> writePTY pty (encodeUtf8 txt)
+      return False
 
 -- | Main application loop
 appLoop :: SDL.Renderer -> TTF.Font -> AppStateVar -> PTY -> VTerm -> TVar Bool -> IO ()
 appLoop renderer font stateVar pty vterm shellExited = do
   -- Poll and process events
   events <- SDL.pollEvents
-  quitSignals <- mapM (\e -> processEvent e pty) events
+  quitSignals <- mapM (\e -> processEvent e pty stateVar) events
   
   -- Check if shell exited (Ctrl+D or shell closed)
   shellDone <- readTVarIO shellExited

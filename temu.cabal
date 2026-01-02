@@ -49,6 +49,7 @@ library
   import:              shared
   hs-source-dirs:      src
   exposed-modules:     Temu.App
+                     , Temu.Clipboard
                      , Temu.Config
                      , Temu.Input
                      , Temu.PTY
