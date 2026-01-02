@@ -5,10 +5,15 @@ module Temu.State
   ( -- * State types
     AppState (..),
     AppStateVar,
+    TerminalState (..),
+
+    -- * Re-exports from VTerm
+    Cell (..),
+    Color (..),
 
     -- * State creation
     newAppState,
-    initialState,
+    newTerminalState,
 
     -- * State access (IO wrappers around STM)
     readAppState,
@@ -19,50 +24,75 @@ module Temu.State
     readAppStateSTM,
     modifyAppStateSTM,
 
-    -- * Specific state operations
+    -- * Terminal state operations
+    updateCellGrid,
+    updateCursorPos,
+
+    -- * UI state operations
     updateCursorBlink,
-    appendToInput,
-    deleteLastChar,
-    clearInputBuffer,
-    setOutputLines,
   )
 where
 
 import Control.Concurrent.STM
-import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 import Data.Word (Word32)
-import Temu.Config (welcomeMessage)
+import Temu.PTY (PTY)
+import Temu.VTerm (Cell (..), Color (..), VTerm)
+
+-- | Terminal emulation state
+data TerminalState = TerminalState
+  { -- | libvterm handle
+    termVTerm :: !VTerm,
+    -- | PTY handle for shell communication
+    termPTY :: !PTY,
+    -- | Cached cell grid for rendering (row-major)
+    termCellGrid :: !(Vector (Vector Cell)),
+    -- | Current cursor position (row, col)
+    termCursorPos :: !(Int, Int),
+    -- | Terminal dimensions (rows, cols)
+    termSize :: !(Int, Int)
+  }
 
 -- | The main application state
 data AppState = AppState
-  { -- | Current input line being typed
-    inputBuffer :: !Text,
-    -- | Lines of output to display
-    outputLines :: ![Text],
+  { -- | Terminal emulation state (lazy for testability)
+    terminal :: TerminalState,
     -- | Whether the cursor is currently visible (for blinking)
     cursorVisible :: !Bool,
     -- | Timestamp of last cursor blink toggle
     lastBlinkTime :: !Word32
   }
-  deriving (Show, Eq)
 
 -- | TVar holding the application state
 type AppStateVar = TVar AppState
 
--- | Initial application state
-initialState :: AppState
-initialState =
-  AppState
-    { inputBuffer = "",
-      outputLines = welcomeMessage,
-      cursorVisible = True,
-      lastBlinkTime = 0
+-- | Create an empty cell grid of given dimensions
+emptyGrid :: Int -> Int -> Vector (Vector Cell)
+emptyGrid rows cols = V.replicate rows (V.replicate cols emptyCell)
+  where
+    emptyCell = Cell ' ' (Color 255 255 255) (Color 0 0 0) False False False False
+
+-- | Create a new terminal state (without STM wrapper)
+newTerminalState :: VTerm -> PTY -> Int -> Int -> TerminalState
+newTerminalState vt pty rows cols =
+  TerminalState
+    { termVTerm = vt,
+      termPTY = pty,
+      termCellGrid = emptyGrid rows cols,
+      termCursorPos = (0, 0),
+      termSize = (rows, cols)
     }
 
--- | Create a new state variable with initial state
-newAppState :: IO AppStateVar
-newAppState = newTVarIO initialState
+-- | Create a new state variable
+newAppState :: TerminalState -> IO AppStateVar
+newAppState termState =
+  newTVarIO
+    AppState
+      { terminal = termState,
+        cursorVisible = True,
+        lastBlinkTime = 0
+      }
 
 -- | Read the current state (IO wrapper)
 readAppState :: AppStateVar -> IO AppState
@@ -86,6 +116,16 @@ readAppStateSTM = readTVar
 modifyAppStateSTM :: AppStateVar -> (AppState -> AppState) -> STM ()
 modifyAppStateSTM = modifyTVar'
 
+-- | Update the cell grid in terminal state
+updateCellGrid :: Vector (Vector Cell) -> AppState -> AppState
+updateCellGrid grid state =
+  state {terminal = (terminal state) {termCellGrid = grid}}
+
+-- | Update the cursor position in terminal state
+updateCursorPos :: (Int, Int) -> AppState -> AppState
+updateCursorPos pos state =
+  state {terminal = (terminal state) {termCursorPos = pos}}
+
 -- | Update cursor blink state if enough time has passed
 updateCursorBlink :: Word32 -> Word32 -> AppState -> AppState
 updateCursorBlink currentTime blinkInterval state
@@ -95,25 +135,3 @@ updateCursorBlink currentTime blinkInterval state
           lastBlinkTime = currentTime
         }
   | otherwise = state
-
--- | Append text to the input buffer
-appendToInput :: Text -> AppState -> AppState
-appendToInput txt state = state {inputBuffer = inputBuffer state <> txt}
-
--- | Delete the last character from the input buffer
-deleteLastChar :: AppState -> AppState
-deleteLastChar state =
-  state
-    { inputBuffer =
-        if T.null (inputBuffer state)
-          then ""
-          else T.init (inputBuffer state)
-    }
-
--- | Clear the input buffer
-clearInputBuffer :: AppState -> AppState
-clearInputBuffer state = state {inputBuffer = ""}
-
--- | Set the output lines
-setOutputLines :: [Text] -> AppState -> AppState
-setOutputLines newLines state = state {outputLines = newLines}

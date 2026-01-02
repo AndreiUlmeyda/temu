@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Terminal/shell execution functionality
--- This module will later be replaced with libvterm integration
+-- | Terminal/shell execution functionality (legacy module)
+-- This module is kept for backward compatibility but is no longer used
+-- in the main application. The PTY+VTerm modules handle terminal emulation.
 module Temu.Terminal
   ( -- * Command execution
     executeCommand,
@@ -19,11 +20,13 @@ import System.Process
     proc,
     waitForProcess,
   )
-import Temu.Config (shellPath)
+import Temu.PTY (getUserShell)
 
--- | Execute a command using the default shell and return output
+-- | Execute a command using the user's default shell and return output
 executeCommand :: Text -> IO Text
-executeCommand = executeCommandWithShell shellPath
+executeCommand cmd = do
+  shell <- getUserShell
+  executeCommandWithShell shell cmd
 
 -- | Execute a command with a specific shell and return output
 -- Returns the last 2 non-empty lines of combined stdout/stderr

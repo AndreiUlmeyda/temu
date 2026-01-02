@@ -2,53 +2,45 @@
 
 module Temu.InputSpec (spec) where
 
+import qualified SDL
 import Temu.Input
-import Temu.State (AppState (..), initialState)
 import Test.Hspec
 
 spec :: Spec
 spec = do
   describe "InputAction" $ do
-    describe "applyInputAction" $ do
-      it "NoAction leaves state unchanged" $ do
-        let state = initialState
-            state' = applyInputAction NoAction state
-        state' `shouldBe` state
-
-      it "TypeChar appends to input buffer" $ do
-        let state = initialState
-            state' = applyInputAction (TypeChar "a") state
-        inputBuffer state' `shouldBe` "a"
-
-      it "TypeChar accumulates characters" $ do
-        let state = initialState {inputBuffer = "hel"}
-            state' = applyInputAction (TypeChar "lo") state
-        inputBuffer state' `shouldBe` "hello"
-
-      it "DeleteChar removes last character" $ do
-        let state = initialState {inputBuffer = "hello"}
-            state' = applyInputAction DeleteChar state
-        inputBuffer state' `shouldBe` "hell"
-
-      it "DeleteChar on empty buffer stays empty" $ do
-        let state = initialState {inputBuffer = ""}
-            state' = applyInputAction DeleteChar state
-        inputBuffer state' `shouldBe` ""
-
-      it "SubmitCommand clears input buffer" $ do
-        let state = initialState {inputBuffer = "ls -la"}
-            state' = applyInputAction (SubmitCommand "ls -la") state
-        inputBuffer state' `shouldBe` ""
-
-      it "Quit leaves state unchanged" $ do
-        let state = initialState {inputBuffer = "test"}
-            state' = applyInputAction Quit state
-        state' `shouldBe` state
-
-  describe "InputAction Show instance" $ do
-    it "can show all action types" $ do
+    it "NoAction shows correctly" $ do
       show NoAction `shouldBe` "NoAction"
-      show (TypeChar "x") `shouldBe` "TypeChar \"x\""
-      show DeleteChar `shouldBe` "DeleteChar"
-      show (SubmitCommand "ls") `shouldBe` "SubmitCommand \"ls\""
+
+    it "Quit shows correctly" $ do
       show Quit `shouldBe` "Quit"
+
+    it "SendBytes shows correctly" $ do
+      show (SendBytes "test") `shouldBe` "SendBytes \"test\""
+
+  describe "keyToBytes" $ do
+    it "converts Return to carriage return" $ do
+      keyToBytes SDL.KeycodeReturn `shouldBe` Just "\r"
+
+    it "converts Backspace to DEL" $ do
+      keyToBytes SDL.KeycodeBackspace `shouldBe` Just "\x7f"
+
+    it "converts Tab correctly" $ do
+      keyToBytes SDL.KeycodeTab `shouldBe` Just "\t"
+
+    it "converts Escape correctly" $ do
+      keyToBytes SDL.KeycodeEscape `shouldBe` Just "\x1b"
+
+    it "converts arrow keys to VT100 sequences" $ do
+      keyToBytes SDL.KeycodeUp `shouldBe` Just "\x1b[A"
+      keyToBytes SDL.KeycodeDown `shouldBe` Just "\x1b[B"
+      keyToBytes SDL.KeycodeRight `shouldBe` Just "\x1b[C"
+      keyToBytes SDL.KeycodeLeft `shouldBe` Just "\x1b[D"
+
+    it "converts Home/End correctly" $ do
+      keyToBytes SDL.KeycodeHome `shouldBe` Just "\x1b[H"
+      keyToBytes SDL.KeycodeEnd `shouldBe` Just "\x1b[F"
+
+    it "returns Nothing for unmapped keys" $ do
+      keyToBytes SDL.KeycodeA `shouldBe` Nothing
+      keyToBytes SDL.KeycodeSpace `shouldBe` Nothing

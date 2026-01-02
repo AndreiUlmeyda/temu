@@ -41,6 +41,9 @@ common shared
                      , process >= 1.6
                      -- Containers
                      , vector >= 0.13
+                     -- PTY and Unix
+                     , unix >= 2.7
+                     , posix-pty >= 0.2
 
 library
   import:              shared
@@ -48,9 +51,15 @@ library
   exposed-modules:     Temu.App
                      , Temu.Config
                      , Temu.Input
+                     , Temu.PTY
                      , Temu.Render
                      , Temu.State
                      , Temu.Terminal
+                     , Temu.VTerm
+  -- Link against libvterm
+  pkgconfig-depends:   vterm >= 0.1
+  include-dirs:        /opt/homebrew/include
+  extra-lib-dirs:      /opt/homebrew/lib
 
 executable temu
   import:              shared

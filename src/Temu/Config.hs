@@ -20,16 +20,11 @@ module Temu.Config
     frameDelayMs,
 
     -- * UI layout
-    lineHeight,
     marginLeft,
     marginTop,
 
-    -- * Shell
-    shellPath,
-
     -- * Application info
     appTitle,
-    welcomeMessage,
   )
 where
 
@@ -39,13 +34,13 @@ import Foreign.C.Types (CInt)
 import qualified SDL
 import qualified SDL.Font as TTF
 
--- | Window width in pixels
+-- | Window width in pixels (calculated for 80 cols + margins)
 windowWidth :: CInt
-windowWidth = 800
+windowWidth = 840
 
--- | Window height in pixels
+-- | Window height in pixels (calculated for 24 rows + margins)
 windowHeight :: CInt
-windowHeight = 200
+windowHeight = 472
 
 -- | Background color - near-black with slight green tint #0A0F0A
 bgColor :: SDL.V4 Word8
@@ -75,10 +70,6 @@ cursorBlinkMs = 500
 frameDelayMs :: Word
 frameDelayMs = 16
 
--- | Line height in pixels
-lineHeight :: CInt
-lineHeight = 28
-
 -- | Left margin in pixels
 marginLeft :: CInt
 marginLeft = 20
@@ -87,14 +78,6 @@ marginLeft = 20
 marginTop :: CInt
 marginTop = 20
 
--- | Path to the shell executable
-shellPath :: FilePath
-shellPath = "/opt/homebrew/bin/fish"
-
 -- | Window title
 appTitle :: Text
 appTitle = "TEMU - The Terminal Emulator We Have At Home"
-
--- | Welcome message shown on startup
-welcomeMessage :: [Text]
-welcomeMessage = ["TEMU v0.1 - The Terminal Emulator We Have At Home", "Ready."]
