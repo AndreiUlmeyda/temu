@@ -17,7 +17,8 @@ testAppState =
   AppState
     { terminal = error "terminal not available in tests",
       cursorVisible = True,
-      lastBlinkTime = 0
+      lastBlinkTime = 0,
+      selection = Nothing
     }
 
 spec :: Spec
